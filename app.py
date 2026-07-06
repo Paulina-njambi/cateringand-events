@@ -132,8 +132,10 @@ def export_csv():
     rows=q('select e.client_name,i.name,di.qty_dispatched,di.qty_returned,(di.qty_dispatched-di.qty_returned) missing,di.last_seen,di.loss_value from dispatch_items di join events e on e.id=di.event_id join items i on i.id=di.item_id')
     lines=['Client,Item,Sent,Returned,Missing,LastSeen,LossValue']+[f'{r["client_name"]},{r["name"]},{r["qty_dispatched"]},{r["qty_returned"]},{r["missing"]},{r["last_seen"]},{r["loss_value"]}' for r in rows]
     return Response('\n'.join(lines),mimetype='text/csv')
+# Initialize the SQLite database when the module is imported by Gunicorn/Render.
+init_db()
+
 if __name__=='__main__':
-    init_db()
     debug_mode = os.environ.get('FLASK_DEBUG') == '1'
     bind_host = '0.0.0.0'
     bind_port = int(os.environ.get('PORT', 5053))
