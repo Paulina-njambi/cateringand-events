@@ -53,9 +53,9 @@ def layout(title,sub,body):
     u=user(); nav=''; who=''
     if u:
         if u['role']=='Admin':
-            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">Events</a><a href="{url_for("new_event")}">New Dispatch</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
+            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">All Dispatch Jobs</a><a href="{url_for("new_event")}">Prepare Dispatch</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
         else:
-            nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">Assigned Events</a><a href="{url_for("new_event")}">Create Dispatch</a><a href="{url_for("logout")}">Logout</a></nav>'
+            nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">My Dispatches</a><a href="{url_for("logout")}">Logout</a></nav>'
         who=f'<p>{u["full_name"]}<br><span>{u["role"]}</span></p>'
     return render_template_string(f'<!doctype html><html><head><title>{title}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"><style>{CSS}</style></head><body><div class="shell"><aside class="side"><div class="brand">Catering Dispatch<span>Quantity verification & returns</span></div>{nav}{who}</aside><main class="main"><div class="top"><div><h1>{title}</h1><p class="sub">{sub}</p></div><div class="pill">Two-way dispatch/return checks</div></div>{flashes()}{body}</main></div></body></html>')
 @app.route('/')
@@ -77,8 +77,8 @@ def dashboard():
     recent=q('select * from events order by id desc limit 8'); rows=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["team_leader"]}</td><td>{r["status"]}</td><td><a class="btn" href="{url_for("event_detail",eid=r["id"])}">Open</a></td></tr>' for r in recent])
     u=user(); is_admin=u and u['role']=='Admin'
     title='Admin Dashboard' if is_admin else 'Team Leader Dashboard'
-    sub='Admin controls inventory, events, dispatches and reports.' if is_admin else 'Team leader records event dispatches and returns only.'
-    role_note='<div class="flash">Admin access: you can manage inventory and view reports.</div>' if is_admin else '<div class="flash">Leader access: no inventory or reports access. Use events and dispatch records only.</div>'
+    sub='Admin prepares dispatch jobs, controls inventory and checks reports.' if is_admin else 'Team leader confirms pickup and records returned items.'
+    role_note='<div class="flash">Admin: prepare jobs, manage inventory, and review reports. You do not sign items out in the field.</div>' if is_admin else '<div class="flash">Leader: open your dispatches, confirm pickup, then record what returned. No inventory or reports access.</div>'
     return layout(title,sub,role_note+f'<section class="grid three"><div class="kpi"><span>Active / Loss Events</span><div class="big">{active}</div></div><div class="kpi"><span>Missing Units</span><div class="big danger">{missing}</div></div><div class="kpi"><span>Loss Value</span><div class="big">KSh {losses:,.0f}</div></div></section><section class="grid two"><div class="card hero-card"><img class="system-photo" src="/static/project_reference.jpg" alt="Catering event equipment reference"><h2>Catering event equipment reference</h2><p class="sub">Visual reference for events equipment that must be dispatched, signed out and reconciled on return.</p></div><div class="card"><h2>Recent Events</h2><table><tr><th>Client</th><th>Type</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
 @app.route('/inventory')
 @admin
@@ -128,9 +128,14 @@ def edit_inventory(iid):
 @need
 def events():
     rows=''.join([f'<tr><td>{e["client_name"]}</td><td>{e["venue"]}</td><td>{e["event_date"]}</td><td>{e["team_leader"]}</td><td>{e["status"]}</td><td><a class="btn" href="{url_for("event_detail",eid=e["id"])}">Open</a></td></tr>' for e in q('select * from events order by id desc')])
-    return layout('Events','Dispatch records from preparation to return reconciliation.',f'<p><a class="btn primary" href="{url_for("new_event")}">Create Dispatch</a></p><div class="card"><table><tr><th>Client</th><th>Venue</th><th>Date</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
+    
+    u=user(); is_admin=u and u['role']=='Admin'
+    create=f'<p><a class="btn primary" href="{url_for("new_event") }">Prepare Dispatch</a></p>' if is_admin else '<p class="sub">These are the dispatch jobs you confirm and return after the event.</p>'
+    title='All Dispatch Jobs' if is_admin else 'My Dispatches'
+    sub='Admin views prepared jobs and their status.' if is_admin else 'Leader confirms pickup and records returns.'
+    return layout(title,sub,f'{create}<div class="card"><table><tr><th>Client</th><th>Venue</th><th>Date</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
 @app.route('/events/new',methods=['GET','POST'])
-@need
+@admin
 def new_event():
     items=q('select * from items order by name')
     if request.method=='POST':
@@ -139,28 +144,37 @@ def new_event():
             qty=int(request.form.get(f'qty_{i["id"]}',0) or 0)
             if qty>0:
                 ex('insert into dispatch_items(event_id,item_id,qty_dispatched,last_seen) values(?,?,?,?)',(eid,i['id'],qty,'Store loading bay before dispatch'))
-        log(f'Created dispatch record #{eid} for {request.form["client_name"]}'); flash('Dispatch record created. Team leader must sign before truck leaves.'); return redirect(url_for('event_detail',eid=eid))
+        log(f'Admin prepared dispatch job #{eid} for {request.form["client_name"]}'); flash('Dispatch job prepared. Team leader must confirm pickup before items leave.'); return redirect(url_for('event_detail',eid=eid))
     qtys=''.join([f'<label>{i["name"]} available {i["available_qty"]}<input type="number" min="0" max="{i["available_qty"]}" name="qty_{i["id"]}" value="0"></label>' for i in items])
-    return layout('New Dispatch','Prepare quantities for event equipment dispatch.',f'<div class="card"><form method="post"><label>Client Name<input name="client_name" required></label><label>Event Type<select name="event_type"><option>Wedding</option><option>Funeral</option><option>Corporate Event</option><option>Private Party</option></select></label><label>Venue<input name="venue" required></label><label>Event Date<input type="date" name="event_date" required></label><label>Team Leader<input name="team_leader" required></label><h3>Dispatch Quantities</h3>{qtys}<button class="btn primary">Save Dispatch</button></form></div>')
+    return layout('Prepare Dispatch','Admin prepares the event job and the items expected to leave the store.',f'<div class="card"><form method="post"><label>Client Name<input name="client_name" required></label><label>Event Type<select name="event_type"><option>Wedding</option><option>Funeral</option><option>Corporate Event</option><option>Private Party</option></select></label><label>Venue<input name="venue" required></label><label>Event Date<input type="date" name="event_date" required></label><label>Team Leader<input name="team_leader" required></label><h3>Dispatch Quantities</h3>{qtys}<button class="btn primary">Prepare Dispatch Job</button></form></div>')
 @app.route('/event/<int:eid>')
 @need
 def event_detail(eid):
     e=q('select * from events where id=?',(eid,),one=True); rows=q('select di.*,i.name,i.replacement_cost from dispatch_items di join items i on i.id=di.item_id where di.event_id=?',(eid,))
     trs=''.join([f'<tr><td>{r["name"]}</td><td>{r["qty_dispatched"]}</td><td>{r["qty_returned"]}</td><td>{r["qty_dispatched"]-r["qty_returned"]}</td><td>{r["last_seen"]}</td><td>KSh {r["loss_value"]:,.0f}</td></tr>' for r in rows])
     forms=''.join([f'<label>{r["name"]} returned<input type="number" min="0" max="{r["qty_dispatched"]}" name="ret_{r["id"]}" value="{r["qty_dispatched"]}"></label>' for r in rows])
-    html=f'<div class="card"><h2>{e["client_name"]} — {e["event_type"]}</h2><p>{e["venue"]} · {e["event_date"]} · Leader: {e["team_leader"]}</p><p>Status: <b>{e["status"]}</b></p><div class="actions"><a class="btn primary" href="{url_for("sign_dispatch",eid=eid)}">Team Leader Sign Dispatch</a><a class="btn" href="{url_for("events")}">Back</a></div><table><tr><th>Item</th><th>Dispatched</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div><div class="card"><h2>Return Reconciliation</h2><form method="post" action="{url_for("reconcile",eid=eid)}">{forms}<label>Last Seen / Notes<textarea name="last_seen">Event venue return count / truck loading point</textarea></label><button class="btn primary">Reconcile Return</button></form></div>'
-    return layout('Dispatch Detail','Two-way check: dispatched quantity versus returned quantity.',html)
+    u=user(); is_admin=u and u['role']=='Admin'
+    base=f'<div class="card"><h2>{e["client_name"]} — {e["event_type"]}</h2><p>{e["venue"]} · {e["event_date"]} · Leader: {e["team_leader"]}</p><p>Status: <b>{e["status"]}</b></p><a class="btn" href="{url_for("events")}">Back</a><table><tr><th>Item</th><th>Prepared</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div>'
+    if is_admin:
+        html=base+'<div class="card"><h2>Admin View</h2><p class="sub">Admin prepares the dispatch and checks progress. The team leader must confirm pickup and record returns.</p></div>'
+    else:
+        sign_btn=f'<a class="btn primary" href="{url_for("sign_dispatch",eid=eid)}">Confirm Pickup / Sign Dispatch</a>' if e['status']=='Draft' else ''
+        return_form=f'<div class="card"><h2>Record Returned Items</h2><form method="post" action="{url_for("reconcile",eid=eid)}">{forms}<label>Last Seen / Notes<textarea name="last_seen">Event venue return count / truck loading point</textarea></label><button class="btn primary">Save Return Record</button></form></div>' if e['status']!='Draft' else '<div class="card"><p class="sub">First confirm pickup before recording returns.</p></div>'
+        html=base+f'<div class="card"><h2>Leader Action</h2>{sign_btn}<p class="sub">Confirm the items when they leave the store. After the event, record what came back.</p></div>'+return_form
+    return layout('Dispatch Detail','Prepared quantity versus returned quantity.',html)
 @app.route('/event/<int:eid>/sign')
 @need
 def sign_dispatch(eid):
+    if user()['role']!='Team Leader': abort(403)
     e=q('select * from events where id=?',(eid,),one=True)
     if e['status']=='Draft':
         for r in q('select * from dispatch_items where event_id=?',(eid,)): ex('update items set available_qty=available_qty-? where id=?',(r['qty_dispatched'],r['item_id']))
-        ex('update events set status="Dispatched",dispatch_signed_at=? where id=?',(datetime.now().isoformat(timespec='seconds'),eid)); log(f'Team leader signed dispatch #{eid} before truck left'); flash('Dispatch signed. Truck may leave with verified quantities.')
+        ex('update events set status="Dispatched",dispatch_signed_at=? where id=?',(datetime.now().isoformat(timespec='seconds'),eid)); log(f'Team leader signed dispatch #{eid} before truck left'); flash('Pickup confirmed. Items have officially left the store.')
     return redirect(url_for('event_detail',eid=eid))
 @app.route('/event/<int:eid>/reconcile',methods=['POST'])
 @need
 def reconcile(eid):
+    if user()['role']!='Team Leader': abort(403)
     loss_total=0; missing_total=0; note=request.form.get('last_seen','Return checkpoint')
     for r in q('select di.*,i.replacement_cost from dispatch_items di join items i on i.id=di.item_id where di.event_id=?',(eid,)):
         ret=int(request.form.get(f'ret_{r["id"]}',0)); missing=max(0,r['qty_dispatched']-ret); loss=missing*r['replacement_cost']; loss_total+=loss; missing_total+=missing
