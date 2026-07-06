@@ -53,7 +53,7 @@ def layout(title,sub,body):
     u=user(); nav=''; who=''
     if u:
         if u['role']=='Admin':
-            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">All Dispatch Jobs</a><a href="{url_for("new_event")}">Prepare Dispatch</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
+            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">Dispatch Jobs</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
         else:
             nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">My Dispatches</a><a href="{url_for("logout")}">Logout</a></nav>'
         who=f'<p>{u["full_name"]}<br><span>{u["role"]}</span></p>'
@@ -131,7 +131,7 @@ def events():
     
     u=user(); is_admin=u and u['role']=='Admin'
     create=f'<p><a class="btn primary" href="{url_for("new_event") }">Prepare Dispatch</a></p>' if is_admin else '<p class="sub">These are the dispatch jobs you confirm and return after the event.</p>'
-    title='All Dispatch Jobs' if is_admin else 'My Dispatches'
+    title='Dispatch Jobs' if is_admin else 'My Dispatches'
     sub='Admin views prepared jobs and their status.' if is_admin else 'Leader confirms pickup and records returns.'
     return layout(title,sub,f'{create}<div class="card"><table><tr><th>Client</th><th>Venue</th><th>Date</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
 @app.route('/events/new',methods=['GET','POST'])
