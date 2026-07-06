@@ -52,7 +52,11 @@ def flashes():
 def layout(title,sub,body):
     u=user(); nav=''; who=''
     if u:
-        nav=f'<nav><a href="{url_for("dashboard")}">Dashboard</a><a href="{url_for("events")}">Events</a><a href="{url_for("new_event")}">New Dispatch</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'; who=f'<p>{u["full_name"]}<br><span>{u["role"]}</span></p>'
+        if u['role']=='Admin':
+            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">Events</a><a href="{url_for("new_event")}">New Dispatch</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
+        else:
+            nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">Assigned Events</a><a href="{url_for("new_event")}">Create Dispatch</a><a href="{url_for("logout")}">Logout</a></nav>'
+        who=f'<p>{u["full_name"]}<br><span>{u["role"]}</span></p>'
     return render_template_string(f'<!doctype html><html><head><title>{title}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"><style>{CSS}</style></head><body><div class="shell"><aside class="side"><div class="brand">Catering Dispatch<span>Quantity verification & returns</span></div>{nav}{who}</aside><main class="main"><div class="top"><div><h1>{title}</h1><p class="sub">{sub}</p></div><div class="pill">Two-way dispatch/return checks</div></div>{flashes()}{body}</main></div></body></html>')
 @app.route('/')
 def index(): return redirect(url_for('dashboard') if user() else url_for('login'))
@@ -71,9 +75,13 @@ def logout(): log('User logged out'); session.clear(); return redirect(url_for('
 def dashboard():
     active=q('select count(*) c from events where status in ("Dispatched","Returned With Loss")',one=True)['c']; losses=q('select coalesce(sum(loss_value),0) total from dispatch_items',one=True)['total']; missing=q('select coalesce(sum(qty_dispatched-qty_returned),0) m from dispatch_items where qty_returned<qty_dispatched',one=True)['m']
     recent=q('select * from events order by id desc limit 8'); rows=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["team_leader"]}</td><td>{r["status"]}</td><td><a class="btn" href="{url_for("event_detail",eid=r["id"])}">Open</a></td></tr>' for r in recent])
-    return layout('Operations Dashboard','Track dispatched equipment, team leader sign-off and missing item losses.',f'<section class="grid three"><div class="kpi"><span>Active / Loss Events</span><div class="big">{active}</div></div><div class="kpi"><span>Missing Units</span><div class="big danger">{missing}</div></div><div class="kpi"><span>Loss Value</span><div class="big">KSh {losses:,.0f}</div></div></section><section class="grid two"><div class="card hero-card"><img class="system-photo" src="/static/project_reference.jpg" alt="Catering event equipment reference"><h2>Catering event equipment reference</h2><p class="sub">Visual reference for events equipment that must be dispatched, signed out and reconciled on return.</p></div><div class="card"><h2>Recent Events</h2><table><tr><th>Client</th><th>Type</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
+    u=user(); is_admin=u and u['role']=='Admin'
+    title='Admin Dashboard' if is_admin else 'Team Leader Dashboard'
+    sub='Admin controls inventory, events, dispatches and reports.' if is_admin else 'Team leader records event dispatches and returns only.'
+    role_note='<div class="flash">Admin access: you can manage inventory and view reports.</div>' if is_admin else '<div class="flash">Leader access: no inventory or reports access. Use events and dispatch records only.</div>'
+    return layout(title,sub,role_note+f'<section class="grid three"><div class="kpi"><span>Active / Loss Events</span><div class="big">{active}</div></div><div class="kpi"><span>Missing Units</span><div class="big danger">{missing}</div></div><div class="kpi"><span>Loss Value</span><div class="big">KSh {losses:,.0f}</div></div></section><section class="grid two"><div class="card hero-card"><img class="system-photo" src="/static/project_reference.jpg" alt="Catering event equipment reference"><h2>Catering event equipment reference</h2><p class="sub">Visual reference for events equipment that must be dispatched, signed out and reconciled on return.</p></div><div class="card"><h2>Recent Events</h2><table><tr><th>Client</th><th>Type</th><th>Leader</th><th>Status</th><th></th></tr>{rows}</table></div>')
 @app.route('/inventory')
-@need
+@admin
 def inventory():
     rows=''.join([f'<tr><td>{i["name"]}</td><td>{i["category"]}</td><td>{i["total_qty"]}</td><td>{i["available_qty"]}</td><td>KSh {i["replacement_cost"]:,.0f}</td><td><a class="btn" href="{url_for("edit_inventory",iid=i["id"])}">Edit</a></td></tr>' for i in q('select * from items order by category,name')])
     form=f'''<div class="card"><h2>Add Inventory Item</h2><form method="post" action="{url_for('add_inventory')}"><label>Item Name<input name="name" placeholder="Example: Dinner Plates" required></label><label>Category<input name="category" placeholder="Example: Crockery" required></label><label>Total Quantity<input type="number" min="0" name="total_qty" required></label><label>Available Quantity<input type="number" min="0" name="available_qty" required></label><label>Replacement Cost (KSh)<input type="number" min="0" step="0.01" name="replacement_cost" required></label><button class="btn primary">Add Item</button></form></div>'''
@@ -81,7 +89,7 @@ def inventory():
     return layout('Inventory','Add, view and update catering items before dispatching them to events.',f'<section class="grid two">{form}{table}</section>')
 
 @app.route('/inventory/add',methods=['POST'])
-@need
+@admin
 def add_inventory():
     name=request.form.get('name','').strip()
     category=request.form.get('category','').strip()
@@ -97,7 +105,7 @@ def add_inventory():
     return redirect(url_for('inventory'))
 
 @app.route('/inventory/<int:iid>/edit',methods=['GET','POST'])
-@need
+@admin
 def edit_inventory(iid):
     item=q('select * from items where id=?',(iid,),one=True)
     if not item: abort(404)
@@ -160,13 +168,13 @@ def reconcile(eid):
     status='Returned Clear' if missing_total==0 else 'Returned With Loss'
     ex('update events set status=?,return_signed_at=? where id=?',(status,datetime.now().isoformat(timespec='seconds'),eid)); log(f'Reconciled event #{eid}: missing {missing_total}, loss KSh {loss_total:,.0f}'); flash(f'Return reconciled. Missing: {missing_total}; Loss: KSh {loss_total:,.0f}.'); return redirect(url_for('event_detail',eid=eid))
 @app.route('/reports')
-@need
+@admin
 def reports():
     rows=q('select e.client_name,e.event_type,e.venue,e.status,i.name,di.qty_dispatched,di.qty_returned,(di.qty_dispatched-di.qty_returned) missing,di.last_seen,di.loss_value from dispatch_items di join events e on e.id=di.event_id join items i on i.id=di.item_id order by e.id desc')
     trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["name"]}</td><td>{r["qty_dispatched"]}</td><td>{r["qty_returned"]}</td><td class="danger">{r["missing"]}</td><td>{r["last_seen"]}</td><td>KSh {r["loss_value"]:,.0f}</td></tr>' for r in rows])
     return layout('Loss & Reconciliation Reports','Shows exactly where missing items were last seen and the value of leakage.',f'<p><a class="btn ghost" href="{url_for("export_csv")}">Export CSV</a></p><div class="card"><table><tr><th>Client</th><th>Item</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div>')
 @app.route('/export.csv')
-@need
+@admin
 def export_csv():
     rows=q('select e.client_name,i.name,di.qty_dispatched,di.qty_returned,(di.qty_dispatched-di.qty_returned) missing,di.last_seen,di.loss_value from dispatch_items di join events e on e.id=di.event_id join items i on i.id=di.item_id')
     lines=['Client,Item,Sent,Returned,Missing,LastSeen,LossValue']+[f'{r["client_name"]},{r["name"]},{r["qty_dispatched"]},{r["qty_returned"]},{r["missing"]},{r["last_seen"]},{r["loss_value"]}' for r in rows]
