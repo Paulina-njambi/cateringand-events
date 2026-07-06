@@ -75,8 +75,47 @@ def dashboard():
 @app.route('/inventory')
 @need
 def inventory():
-    rows=''.join([f'<tr><td>{i["name"]}</td><td>{i["category"]}</td><td>{i["total_qty"]}</td><td>{i["available_qty"]}</td><td>KSh {i["replacement_cost"]:,.0f}</td></tr>' for i in q('select * from items order by category,name')])
-    return layout('Inventory','Available equipment and replacement cost used in loss reports.',f'<div class="card"><table><tr><th>Item</th><th>Category</th><th>Total</th><th>Available</th><th>Replacement Cost</th></tr>{rows}</table></div>')
+    rows=''.join([f'<tr><td>{i["name"]}</td><td>{i["category"]}</td><td>{i["total_qty"]}</td><td>{i["available_qty"]}</td><td>KSh {i["replacement_cost"]:,.0f}</td><td><a class="btn" href="{url_for("edit_inventory",iid=i["id"])}">Edit</a></td></tr>' for i in q('select * from items order by category,name')])
+    form=f'''<div class="card"><h2>Add Inventory Item</h2><form method="post" action="{url_for('add_inventory')}"><label>Item Name<input name="name" placeholder="Example: Dinner Plates" required></label><label>Category<input name="category" placeholder="Example: Crockery" required></label><label>Total Quantity<input type="number" min="0" name="total_qty" required></label><label>Available Quantity<input type="number" min="0" name="available_qty" required></label><label>Replacement Cost (KSh)<input type="number" min="0" step="0.01" name="replacement_cost" required></label><button class="btn primary">Add Item</button></form></div>'''
+    table=f'''<div class="card"><h2>Inventory List</h2><table><tr><th>Item</th><th>Category</th><th>Total</th><th>Available</th><th>Replacement Cost</th><th>Action</th></tr>{rows}</table></div>'''
+    return layout('Inventory','Add, view and update catering items before dispatching them to events.',f'<section class="grid two">{form}{table}</section>')
+
+@app.route('/inventory/add',methods=['POST'])
+@need
+def add_inventory():
+    name=request.form.get('name','').strip()
+    category=request.form.get('category','').strip()
+    total=max(0,int(request.form.get('total_qty',0) or 0))
+    available=max(0,int(request.form.get('available_qty',0) or 0))
+    cost=max(0,float(request.form.get('replacement_cost',0) or 0))
+    if available>total:
+        flash('Available quantity cannot be more than total quantity.')
+        return redirect(url_for('inventory'))
+    ex('insert into items(name,category,total_qty,available_qty,replacement_cost) values(?,?,?,?,?)',(name,category,total,available,cost))
+    log(f'Added inventory item: {name} ({available}/{total})')
+    flash('Inventory item added successfully.')
+    return redirect(url_for('inventory'))
+
+@app.route('/inventory/<int:iid>/edit',methods=['GET','POST'])
+@need
+def edit_inventory(iid):
+    item=q('select * from items where id=?',(iid,),one=True)
+    if not item: abort(404)
+    if request.method=='POST':
+        name=request.form.get('name','').strip()
+        category=request.form.get('category','').strip()
+        total=max(0,int(request.form.get('total_qty',0) or 0))
+        available=max(0,int(request.form.get('available_qty',0) or 0))
+        cost=max(0,float(request.form.get('replacement_cost',0) or 0))
+        if available>total:
+            flash('Available quantity cannot be more than total quantity.')
+            return redirect(url_for('edit_inventory',iid=iid))
+        ex('update items set name=?,category=?,total_qty=?,available_qty=?,replacement_cost=? where id=?',(name,category,total,available,cost,iid))
+        log(f'Updated inventory item: {name} ({available}/{total})')
+        flash('Inventory item updated successfully.')
+        return redirect(url_for('inventory'))
+    form=f'''<div class="card"><form method="post"><label>Item Name<input name="name" value="{item["name"]}" required></label><label>Category<input name="category" value="{item["category"]}" required></label><label>Total Quantity<input type="number" min="0" name="total_qty" value="{item["total_qty"]}" required></label><label>Available Quantity<input type="number" min="0" name="available_qty" value="{item["available_qty"]}" required></label><label>Replacement Cost (KSh)<input type="number" min="0" step="0.01" name="replacement_cost" value="{item["replacement_cost"]}" required></label><button class="btn primary">Save Changes</button><a class="btn" href="{url_for('inventory')}">Cancel</a></form></div>'''
+    return layout('Edit Inventory Item','Update stock quantity and replacement value for this catering item.',form)
 @app.route('/events')
 @need
 def events():
