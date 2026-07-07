@@ -150,10 +150,20 @@ def new_event():
 @app.route('/returns')
 @need
 def returns():
-    rows=q('select e.*, coalesce(sum(di.qty_dispatched),0) sent, coalesce(sum(di.qty_returned),0) returned, coalesce(sum(di.qty_dispatched-di.qty_returned),0) missing, coalesce(sum(di.loss_value),0) loss from events e left join dispatch_items di on di.event_id=e.id where e.status != "Draft" group by e.id order by case when e.status="Dispatched" then 0 when e.status="Returned With Loss" then 1 else 2 end, e.id desc')
-    trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["venue"]}</td><td>{r["status"]}</td><td>{r["sent"]}</td><td>{r["returned"]}</td><td class="danger">{r["missing"]}</td><td>KSh {r["loss"]:,.0f}</td><td><a class="btn primary" href="{url_for("event_detail",eid=r["id"])}">Enter Returned Items</a></td></tr>' for r in rows])
-    note='<div class="flash">After dispatch, use this section to count what came back. The missing quantities flow into the Admin report automatically.</div>'
-    return layout('Returns Check','Record returned items after dispatch and expose missing items for reports.',note+f'<div class="card"><table><tr><th>Client</th><th>Type</th><th>Venue</th><th>Status</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Loss</th><th>Action</th></tr>{trs}</table></div>')
+    events_rows=q('select * from events order by case when status="Dispatched" then 0 when status="Returned With Loss" then 1 when status="Returned Clear" then 2 else 3 end, id desc')
+    cards=[]
+    for e in events_rows:
+        items=q('select di.*,i.name,i.replacement_cost from dispatch_items di join items i on i.id=di.item_id where di.event_id=? order by i.name',(e['id'],))
+        sent=sum([r['qty_dispatched'] for r in items]); returned=sum([r['qty_returned'] for r in items]); missing=sum([max(0,r['qty_dispatched']-r['qty_returned']) for r in items]); loss=sum([r['loss_value'] for r in items])
+        item_rows=''.join([f'<tr><td>{r["name"]}</td><td>{r["qty_dispatched"]}</td><td><input type="number" min="0" max="{r["qty_dispatched"]}" name="ret_{r["id"]}" value="{r["qty_returned"] if r["qty_returned"] else r["qty_dispatched"]}"></td><td class="danger">{max(0,r["qty_dispatched"]-r["qty_returned"])}</td></tr>' for r in items])
+        if e['status']=='Draft':
+            action=f'<p class="sub">Pickup has not been confirmed yet. Open this job first and confirm pickup before recording returns.</p><a class="btn primary" href="{url_for("event_detail",eid=e["id"])}">Open Job / Confirm Pickup</a>'
+        else:
+            action=f'<form method="post" action="{url_for("reconcile",eid=e["id"])}"><table><tr><th>Item</th><th>Sent</th><th>Enter Returned Qty</th><th>Currently Missing</th></tr>{item_rows}</table><label>Last Seen / Notes<textarea name="last_seen">Counted at venue before leaving</textarea></label><button class="btn primary">Save Returned Items</button></form>'
+        cards.append(f'<div class="card"><h2>{e["client_name"]} — {e["event_type"]}</h2><p>{e["venue"]} · {e["event_date"]} · Leader: {e["team_leader"]}</p><p>Status: <b>{e["status"]}</b> · Sent: {sent} · Returned: {returned} · Missing: <b class="danger">{missing}</b> · Loss: KSh {loss:,.0f}</p>{action}</div>')
+    body=''.join(cards) or '<div class="card"><p>No dispatch jobs yet.</p></div>'
+    note='<div class="flash">Use this page directly after the event. Type the quantity that came back for each item, then save. Missing items go to Admin Reports automatically.</div>'
+    return layout('Returns Check','Enter returned quantities directly on this page after dispatch.',note+body)
 
 @app.route('/event/<int:eid>')
 @need
