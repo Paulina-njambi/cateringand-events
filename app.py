@@ -53,9 +53,9 @@ def layout(title,sub,body):
     u=user(); nav=''; who=''
     if u:
         if u['role']=='Admin':
-            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">Dispatch Jobs</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
+            nav=f'<nav><a href="{url_for("dashboard")}">Admin Dashboard</a><a href="{url_for("events")}">Dispatch Jobs</a><a href="{url_for("returns")}">Returns Check</a><a href="{url_for("inventory")}">Inventory</a><a href="{url_for("reports")}">Reports</a><a href="{url_for("logout")}">Logout</a></nav>'
         else:
-            nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">My Dispatches</a><a href="{url_for("logout")}">Logout</a></nav>'
+            nav=f'<nav><a href="{url_for("dashboard")}">Leader Dashboard</a><a href="{url_for("events")}">My Dispatches</a><a href="{url_for("returns")}">Returns Check</a><a href="{url_for("logout")}">Logout</a></nav>'
         who=f'<p>{u["full_name"]}<br><span>{u["role"]}</span></p>'
     return render_template_string(f'<!doctype html><html><head><title>{title}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"><style>{CSS}</style></head><body><div class="shell"><aside class="side"><div class="brand">Catering Dispatch<span>Quantity verification & returns</span></div>{nav}{who}</aside><main class="main"><div class="top"><div><h1>{title}</h1><p class="sub">{sub}</p></div><div class="pill">Two-way dispatch/return checks</div></div>{flashes()}{body}</main></div></body></html>')
 @app.route('/')
@@ -147,6 +147,14 @@ def new_event():
         log(f'Admin prepared dispatch job #{eid} for {request.form["client_name"]}'); flash('Dispatch job prepared. Team leader must confirm pickup before items leave.'); return redirect(url_for('event_detail',eid=eid))
     qtys=''.join([f'<label>{i["name"]} available {i["available_qty"]}<input type="number" min="0" max="{i["available_qty"]}" name="qty_{i["id"]}" value="0"></label>' for i in items])
     return layout('Prepare Dispatch','Admin prepares the event job and the items expected to leave the store.',f'<div class="card"><form method="post"><label>Client Name<input name="client_name" required></label><label>Event Type<select name="event_type"><option>Wedding</option><option>Funeral</option><option>Corporate Event</option><option>Private Party</option></select></label><label>Venue<input name="venue" required></label><label>Event Date<input type="date" name="event_date" required></label><label>Team Leader<input name="team_leader" required></label><h3>Dispatch Quantities</h3>{qtys}<button class="btn primary">Prepare Dispatch Job</button></form></div>')
+@app.route('/returns')
+@need
+def returns():
+    rows=q('select e.*, coalesce(sum(di.qty_dispatched),0) sent, coalesce(sum(di.qty_returned),0) returned, coalesce(sum(di.qty_dispatched-di.qty_returned),0) missing, coalesce(sum(di.loss_value),0) loss from events e left join dispatch_items di on di.event_id=e.id where e.status != "Draft" group by e.id order by case when e.status="Dispatched" then 0 when e.status="Returned With Loss" then 1 else 2 end, e.id desc')
+    trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["venue"]}</td><td>{r["status"]}</td><td>{r["sent"]}</td><td>{r["returned"]}</td><td class="danger">{r["missing"]}</td><td>KSh {r["loss"]:,.0f}</td><td><a class="btn primary" href="{url_for("event_detail",eid=r["id"])}">Check Return</a></td></tr>' for r in rows])
+    note='<div class="flash">After dispatch, use this section to count what came back. The missing quantities flow into the Admin report automatically.</div>'
+    return layout('Returns Check','Record returned items after dispatch and expose missing items for reports.',note+f'<div class="card"><table><tr><th>Client</th><th>Type</th><th>Venue</th><th>Status</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Loss</th><th></th></tr>{trs}</table></div>')
+
 @app.route('/event/<int:eid>')
 @need
 def event_detail(eid):
@@ -155,11 +163,11 @@ def event_detail(eid):
     forms=''.join([f'<label>{r["name"]} returned<input type="number" min="0" max="{r["qty_dispatched"]}" name="ret_{r["id"]}" value="{r["qty_dispatched"]}"></label>' for r in rows])
     u=user(); is_admin=u and u['role']=='Admin'
     base=f'<div class="card"><h2>{e["client_name"]} — {e["event_type"]}</h2><p>{e["venue"]} · {e["event_date"]} · Leader: {e["team_leader"]}</p><p>Status: <b>{e["status"]}</b></p><a class="btn" href="{url_for("events")}">Back</a><table><tr><th>Item</th><th>Prepared</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div>'
+    return_form=f'<div class="card"><h2>Record Returned Items</h2><p class="sub">Count the physical items that came back after dispatch. Anything not returned becomes missing in the report.</p><form method="post" action="{url_for("reconcile",eid=eid)}">{forms}<label>Last Seen / Notes<textarea name="last_seen">Event venue return count / truck loading point</textarea></label><button class="btn primary">Save Return Record</button></form></div>' if e['status']!='Draft' else '<div class="card"><p class="sub">First confirm pickup before recording returns.</p></div>'
     if is_admin:
-        html=base+'<div class="card"><h2>Admin View</h2><p class="sub">Admin prepares the dispatch and checks progress. The team leader must confirm pickup and record returns.</p></div>'
+        html=base+'<div class="card"><h2>Admin Return Check</h2><p class="sub">Admin can review the prepared dispatch and, after pickup is confirmed, record or correct the return count if needed.</p></div>'+return_form
     else:
         sign_btn=f'<a class="btn primary" href="{url_for("sign_dispatch",eid=eid)}">Confirm Pickup / Sign Dispatch</a>' if e['status']=='Draft' else ''
-        return_form=f'<div class="card"><h2>Record Returned Items</h2><form method="post" action="{url_for("reconcile",eid=eid)}">{forms}<label>Last Seen / Notes<textarea name="last_seen">Event venue return count / truck loading point</textarea></label><button class="btn primary">Save Return Record</button></form></div>' if e['status']!='Draft' else '<div class="card"><p class="sub">First confirm pickup before recording returns.</p></div>'
         html=base+f'<div class="card"><h2>Leader Action</h2>{sign_btn}<p class="sub">Confirm the items when they leave the store. After the event, record what came back.</p></div>'+return_form
     return layout('Dispatch Detail','Prepared quantity versus returned quantity.',html)
 @app.route('/event/<int:eid>/sign')
@@ -174,19 +182,24 @@ def sign_dispatch(eid):
 @app.route('/event/<int:eid>/reconcile',methods=['POST'])
 @need
 def reconcile(eid):
-    if user()['role']!='Team Leader': abort(403)
+    if user()['role'] not in ('Admin','Team Leader'): abort(403)
     loss_total=0; missing_total=0; note=request.form.get('last_seen','Return checkpoint')
     for r in q('select di.*,i.replacement_cost from dispatch_items di join items i on i.id=di.item_id where di.event_id=?',(eid,)):
         ret=int(request.form.get(f'ret_{r["id"]}',0)); missing=max(0,r['qty_dispatched']-ret); loss=missing*r['replacement_cost']; loss_total+=loss; missing_total+=missing
-        ex('update dispatch_items set qty_returned=?,last_seen=?,loss_value=? where id=?',(ret,note,loss,r['id'])); ex('update items set available_qty=available_qty+? where id=?',(ret,r['item_id']))
+        previous_returned=r['qty_returned'] or 0; delta=ret-previous_returned
+        ex('update dispatch_items set qty_returned=?,last_seen=?,loss_value=? where id=?',(ret,note,loss,r['id'])); ex('update items set available_qty=available_qty+? where id=?',(delta,r['item_id']))
     status='Returned Clear' if missing_total==0 else 'Returned With Loss'
     ex('update events set status=?,return_signed_at=? where id=?',(status,datetime.now().isoformat(timespec='seconds'),eid)); log(f'Reconciled event #{eid}: missing {missing_total}, loss KSh {loss_total:,.0f}'); flash(f'Return reconciled. Missing: {missing_total}; Loss: KSh {loss_total:,.0f}.'); return redirect(url_for('event_detail',eid=eid))
 @app.route('/reports')
 @admin
 def reports():
     rows=q('select e.client_name,e.event_type,e.venue,e.status,i.name,di.qty_dispatched,di.qty_returned,(di.qty_dispatched-di.qty_returned) missing,di.last_seen,di.loss_value from dispatch_items di join events e on e.id=di.event_id join items i on i.id=di.item_id order by e.id desc')
+    missing_rows=[r for r in rows if r['missing']>0]
+    total_missing=sum([r['missing'] for r in rows]); total_loss=sum([r['loss_value'] for r in rows])
     trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["name"]}</td><td>{r["qty_dispatched"]}</td><td>{r["qty_returned"]}</td><td class="danger">{r["missing"]}</td><td>{r["last_seen"]}</td><td>KSh {r["loss_value"]:,.0f}</td></tr>' for r in rows])
-    return layout('Loss & Reconciliation Reports','Shows exactly where missing items were last seen and the value of leakage.',f'<p><a class="btn ghost" href="{url_for("export_csv")}">Export CSV</a></p><div class="card"><table><tr><th>Client</th><th>Item</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div>')
+    missing_trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["name"]}</td><td class="danger">{r["missing"]}</td><td>{r["last_seen"]}</td><td>KSh {r["loss_value"]:,.0f}</td></tr>' for r in missing_rows]) or '<tr><td colspan="5">No missing items recorded.</td></tr>'
+    summary=f'<section class="grid two"><div class="kpi"><span>Total Missing Items</span><div class="big danger">{total_missing}</div></div><div class="kpi"><span>Total Loss Value</span><div class="big">KSh {total_loss:,.0f}</div></div></section>'
+    return layout('Loss & Reconciliation Reports','Admin sees what came back, what is missing, where it was last seen, and the loss value.',summary+f'<p><a class="btn ghost" href="{url_for("export_csv")}">Export CSV</a></p><div class="card"><h2>Missing Items Only</h2><table><tr><th>Client</th><th>Item</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{missing_trs}</table></div><div class="card"><h2>Full Return Reconciliation</h2><table><tr><th>Client</th><th>Item</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Last Seen</th><th>Loss</th></tr>{trs}</table></div>')
 @app.route('/export.csv')
 @admin
 def export_csv():
