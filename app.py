@@ -151,9 +151,9 @@ def new_event():
 @need
 def returns():
     rows=q('select e.*, coalesce(sum(di.qty_dispatched),0) sent, coalesce(sum(di.qty_returned),0) returned, coalesce(sum(di.qty_dispatched-di.qty_returned),0) missing, coalesce(sum(di.loss_value),0) loss from events e left join dispatch_items di on di.event_id=e.id where e.status != "Draft" group by e.id order by case when e.status="Dispatched" then 0 when e.status="Returned With Loss" then 1 else 2 end, e.id desc')
-    trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["venue"]}</td><td>{r["status"]}</td><td>{r["sent"]}</td><td>{r["returned"]}</td><td class="danger">{r["missing"]}</td><td>KSh {r["loss"]:,.0f}</td><td><a class="btn primary" href="{url_for("event_detail",eid=r["id"])}">Check Return</a></td></tr>' for r in rows])
+    trs=''.join([f'<tr><td>{r["client_name"]}</td><td>{r["event_type"]}</td><td>{r["venue"]}</td><td>{r["status"]}</td><td>{r["sent"]}</td><td>{r["returned"]}</td><td class="danger">{r["missing"]}</td><td>KSh {r["loss"]:,.0f}</td><td><a class="btn primary" href="{url_for("event_detail",eid=r["id"])}">Enter Returned Items</a></td></tr>' for r in rows])
     note='<div class="flash">After dispatch, use this section to count what came back. The missing quantities flow into the Admin report automatically.</div>'
-    return layout('Returns Check','Record returned items after dispatch and expose missing items for reports.',note+f'<div class="card"><table><tr><th>Client</th><th>Type</th><th>Venue</th><th>Status</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Loss</th><th></th></tr>{trs}</table></div>')
+    return layout('Returns Check','Record returned items after dispatch and expose missing items for reports.',note+f'<div class="card"><table><tr><th>Client</th><th>Type</th><th>Venue</th><th>Status</th><th>Sent</th><th>Returned</th><th>Missing</th><th>Loss</th><th>Action</th></tr>{trs}</table></div>')
 
 @app.route('/event/<int:eid>')
 @need
